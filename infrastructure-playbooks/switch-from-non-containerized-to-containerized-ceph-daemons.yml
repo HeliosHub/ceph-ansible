@@ -58,6 +58,11 @@
       when: delegate_facts_host | bool
       tags: always
 
+    - import_role:
+        name: ceph-facts
+    - import_role:
+        name: ceph-validate
+
 - name: switching from non-containerized to containerized ceph mon
   vars:
     containerized_deployment: true
@@ -98,7 +103,7 @@
     # The file module has to run checks on current ownership of all directories and files. This is unnecessary
     # as in this case we know we want all owned by ceph user
     - name: set proper ownership on ceph directories
-      command: "find /var/lib/ceph /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown -h {{ ceph_uid }}:{{ ceph_uid }} {} +"
+      command: "find /var/lib/ceph/mon /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown -h {{ ceph_uid }}:{{ ceph_uid }} {} +"
       changed_when: false
 
     - name: check for existing old leveldb file extension (ldb)
@@ -183,7 +188,7 @@
     # The file module has to run checks on current ownership of all directories and files. This is unnecessary
     # as in this case we know we want all owned by ceph user
     - name: set proper ownership on ceph directories
-      command: "find /var/lib/ceph /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown -h {{ ceph_uid }}:{{ ceph_uid }} {} +"
+      command: "find /var/lib/ceph/mgr /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown -h {{ ceph_uid }}:{{ ceph_uid }} {} +"
       changed_when: false
 
   tasks:
@@ -209,6 +214,41 @@
     - import_role:
         name: ceph-facts
         tasks_from: container_binary.yml
+
+    - name: get pool list
+      command: "{{ ceph_cmd }} --cluster {{ cluster }} osd pool ls detail -f json"
+      register: pool_list
+      changed_when: false
+      check_mode: false
+
+    - name: get balancer module status
+      command: "{{ ceph_cmd }} --cluster {{ cluster }} balancer status -f json"
+      register: balancer_status_switch
+      changed_when: false
+      check_mode: false
+
+    - name: set_fact pools_pgautoscaler_mode
+      set_fact:
+        pools_pgautoscaler_mode: "{{ pools_pgautoscaler_mode | default([]) | union([{'name': item.pool_name, 'mode': item.pg_autoscale_mode}]) }}"
+      with_items: "{{ pool_list.stdout | default('{}') | from_json }}"
+
+    - name: disable balancer
+      command: "{{ ceph_cmd }} --cluster {{ cluster }} balancer off"
+      changed_when: false
+      when: (balancer_status_switch.stdout | from_json)['active'] | bool
+
+    - name: disable pg autoscale on pools
+      ceph_pool:
+        name: "{{ item.name }}"
+        cluster: "{{ cluster }}"
+        pg_autoscale_mode: false
+      with_items: "{{ pools_pgautoscaler_mode }}"
+      when:
+        - pools_pgautoscaler_mode is defined
+        - item.mode == 'on'
+      environment:
+        CEPH_CONTAINER_IMAGE: "{{ ceph_docker_registry + '/' + ceph_docker_image + ':' + ceph_docker_image_tag if containerized_deployment | bool else None }}"
+        CEPH_CONTAINER_BINARY: "{{ container_binary }}"
 
     - name: set osd flags
       ceph_osd_flag:
@@ -286,7 +326,7 @@
     # The file module has to run checks on current ownership of all directories and files. This is unnecessary
     # as in this case we know we want all owned by ceph user
     - name: set proper ownership on ceph directories
-      command: "find /var/lib/ceph /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown -h {{ ceph_uid }}:{{ ceph_uid }} {} +"
+      command: "find /var/lib/ceph/osd /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown -h {{ ceph_uid }}:{{ ceph_uid }} {} +"
       changed_when: false
 
     - name: check for existing old leveldb file extension (ldb)
@@ -361,7 +401,20 @@
         name: ceph-facts
         tasks_from: container_binary.yml
 
-    - name: set osd flags
+    - name: re-enable pg autoscale on pools
+      ceph_pool:
+        name: "{{ item.name }}"
+        cluster: "{{ cluster }}"
+        pg_autoscale_mode: true
+      with_items: "{{ pools_pgautoscaler_mode }}"
+      when:
+        - pools_pgautoscaler_mode is defined
+        - item.mode == 'on'
+      environment:
+        CEPH_CONTAINER_IMAGE: "{{ ceph_docker_registry + '/' + ceph_docker_image + ':' + ceph_docker_image_tag if containerized_deployment | bool else None }}"
+        CEPH_CONTAINER_BINARY: "{{ container_binary }}"
+
+    - name: unset osd flags
       ceph_osd_flag:
         name: "{{ item }}"
         cluster: "{{ cluster }}"
@@ -372,6 +425,12 @@
       with_items:
         - noout
         - nodeep-scrub
+
+    - name: re-enable balancer
+      command: "{{ ceph_cmd }} --cluster {{ cluster }} balancer on"
+      changed_when: false
+      when: (balancer_status_switch.stdout | from_json)['active'] | bool
+
 
 - name: switching from non-containerized to containerized ceph mds
 
@@ -411,7 +470,7 @@
     # The file module has to run checks on current ownership of all directories and files. This is unnecessary
     # as in this case we know we want all owned by ceph user
     - name: set proper ownership on ceph directories
-      command: "find /var/lib/ceph /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown {{ ceph_uid }}:{{ ceph_uid }} {} +"
+      command: "find /var/lib/ceph/mds /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown {{ ceph_uid }}:{{ ceph_uid }} {} +"
       changed_when: false
 
   tasks:
@@ -453,7 +512,7 @@
     # The file module has to run checks on current ownership of all directories and files. This is unnecessary
     # as in this case we know we want all owned by ceph user
     - name: set proper ownership on ceph directories
-      command: "find /var/lib/ceph /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown {{ ceph_uid }}:{{ ceph_uid }} {} +"
+      command: "find /var/lib/ceph/radosgw /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown {{ ceph_uid }}:{{ ceph_uid }} {} +"
       changed_when: false
 
   tasks:
@@ -673,3 +732,23 @@
 
     - import_role:
         name: ceph-crash
+
+- name: final task
+  hosts:
+    - "{{ mon_group_name|default('mons') }}"
+    - "{{ mgr_group_name|default('mgrs') }}"
+    - "{{ osd_group_name|default('osds') }}"
+    - "{{ mds_group_name|default('mdss') }}"
+    - "{{ rgw_group_name|default('rgws') }}"
+  vars:
+    containerized_deployment: true
+  become: true
+  tasks:
+    - import_role:
+        name: ceph-defaults
+    # NOTE: changed from file module to raw find command for performance reasons
+    # The file module has to run checks on current ownership of all directories and files. This is unnecessary
+    # as in this case we know we want all owned by ceph user
+    - name: set proper ownership on ceph directories
+      command: "find /var/lib/ceph /etc/ceph -not -( -user {{ ceph_uid }} -or -group {{ ceph_uid }} -) -execdir chown {{ ceph_uid }}:{{ ceph_uid }} {} +"
+      changed_when: false

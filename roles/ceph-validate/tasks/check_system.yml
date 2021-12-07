@@ -6,8 +6,8 @@
 
 - name: fail on unsupported ansible version
   fail:
-    msg: "Ansible version must be 2.9!"
-  when: ansible_version.minor|int != 9
+    msg: "Ansible version must be 2.10!"
+  when: ansible_version.minor|int != 10
 
 - name: fail on unsupported system
   fail:
@@ -44,7 +44,6 @@
       when: ansible_facts['distribution_version'] is version('8.2', '<')
 
     - name: subscription manager related tasks
-      when: ceph_repository_type == 'cdn'
       block:
         - name: determine if node is registered with subscription-manager
           command: subscription-manager identity

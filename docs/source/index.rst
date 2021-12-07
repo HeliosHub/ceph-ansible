@@ -83,7 +83,7 @@ The ``master`` branch should be considered experimental and used with caution.
 
 - ``stable-6.0`` Supports Ceph version ``pacific``. This branch requires Ansible version ``2.9``.
 
-- ``master`` Supports the master branch of Ceph. This branch requires Ansible version ``2.9``.
+- ``master`` Supports the master branch of Ceph. This branch requires Ansible version ``2.10``.
 
 .. NOTE:: ``stable-3.0`` and ``stable-3.1`` branches of ceph-ansible are deprecated and no longer maintained.
 
@@ -215,7 +215,6 @@ An example configuration that deploys the upstream ``octopus`` version of Ceph w
 
    ceph_origin: repository
    ceph_repository: community
-   ceph_stable_release: octopus
    public_network: "192.168.3.0/24"
    cluster_network: "192.168.4.0/24"
    monitor_interface: eth1
@@ -227,7 +226,6 @@ The following config options are required to be changed on all installations but
 selection or other aspects of your cluster.
 
 - ``ceph_origin``
-- ``ceph_stable_release``
 - ``public_network``
 - ``monitor_interface`` or ``monitor_address``
 
